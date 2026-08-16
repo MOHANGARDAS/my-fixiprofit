@@ -45,8 +45,8 @@ export function Settings() {
 
   const handleBackup = async () => {
     showStatus('info', 'Backing up...');
-    const ok = await backupNow();
-    showStatus(ok ? 'success' : 'error', ok ? 'Backup done!' : 'Backup failed');
+    const result = await backupNow();
+    showStatus(result.success ? 'success' : 'error', result.success ? 'Backup done!' : result.error || 'Backup failed');
   };
 
   const handleRestore = async () => {
@@ -55,7 +55,7 @@ export function Settings() {
     if (result.success) {
       showStatus('success', `Added: ${result.added || 0} | Skipped duplicates: ${result.skipped || 0}`);
     } else {
-      showStatus('error', 'No backup found');
+      showStatus('error', result.error || 'No backup found');
     }
   };
 

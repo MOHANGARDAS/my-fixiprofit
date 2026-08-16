@@ -4,6 +4,9 @@ import { VitePWA } from 'vite-plugin-pwa';
 import path from 'path';
 
 export default defineConfig({
+  // Dev/preview only: allow tunnelled preview hosts (no effect on production build)
+  server: { host: '0.0.0.0', allowedHosts: true },
+  preview: { host: '0.0.0.0', allowedHosts: true },
   plugins: [
     react(),
     VitePWA({
