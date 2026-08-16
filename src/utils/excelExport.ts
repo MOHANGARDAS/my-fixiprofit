@@ -1,17 +1,35 @@
 import ExcelJS from 'exceljs';
 import type { Repair } from '@/types';
 
-function formatDateForExcel(dateStr: string): string {
-  if (!dateStr) return '';
-  if (dateStr.includes('T')) {
-    return new Date(dateStr).toLocaleString('en-IN', {
+// Defensive helpers - old backups / imported data can have missing or
+// wrongly-typed fields. Export must NEVER crash because of one bad record.
+function safeNumber(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function safeText(v: unknown): string {
+  if (v == null) return '';
+  return typeof v === 'string' ? v : String(v);
+}
+
+function formatDateForExcel(dateStr: unknown): string {
+  if (!dateStr || typeof dateStr !== 'string') return '';
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr; // Keep raw text if unparseable
+    if (dateStr.includes('T')) {
+      return d.toLocaleString('en-IN', {
+        day: '2-digit', month: 'short', year: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+      });
+    }
+    return d.toLocaleDateString('en-IN', {
       day: '2-digit', month: 'short', year: 'numeric',
-      hour: '2-digit', minute: '2-digit',
     });
+  } catch {
+    return String(dateStr);
   }
-  return new Date(dateStr).toLocaleDateString('en-IN', {
-    day: '2-digit', month: 'short', year: 'numeric',
-  });
 }
 
 export async function generateExcel(repairs: Repair[]): Promise<Blob> {
@@ -49,12 +67,14 @@ export async function generateExcel(repairs: Repair[]): Promise<Blob> {
   let totalCost = 0, totalRevenue = 0, totalProfit = 0;
 
   repairs.forEach((repair, idx) => {
-    const profit = repair.chargedPrice - repair.repairCost;
-    totalCost += repair.repairCost;
-    totalRevenue += repair.chargedPrice;
+    const cost = safeNumber(repair.repairCost);
+    const price = safeNumber(repair.chargedPrice);
+    const profit = price - cost;
+    totalCost += cost;
+    totalRevenue += price;
     totalProfit += profit;
 
-    const row = ws.addRow([idx + 1, formatDateForExcel(repair.date), repair.deviceModel, repair.repairCost, repair.chargedPrice, profit, repair.notes || '']);
+    const row = ws.addRow([idx + 1, formatDateForExcel(repair.date), safeText(repair.deviceModel), cost, price, profit, safeText(repair.notes)]);
     row.eachCell((cell, colNumber) => {
       cell.font = { size: 10 };
       cell.alignment = { vertical: 'middle', wrapText: true };
@@ -140,12 +160,18 @@ export async function generateExcel(repairs: Repair[]): Promise<Blob> {
 
   const monthlyData: Record<string, { repairs: number; revenue: number; cost: number; profit: number }> = {};
   repairs.forEach(r => {
-    const month = r.date.substring(0, 7);
+    // Only bucket records with a valid YYYY-MM prefix - bad/missing dates are
+    // skipped here instead of crashing the whole export (they still appear in
+    // the "All Repairs" sheet).
+    const month = typeof r.date === 'string' ? r.date.substring(0, 7) : '';
+    if (!/^\d{4}-\d{2}$/.test(month)) return;
+    const cost = safeNumber(r.repairCost);
+    const price = safeNumber(r.chargedPrice);
     if (!monthlyData[month]) monthlyData[month] = { repairs: 0, revenue: 0, cost: 0, profit: 0 };
     monthlyData[month].repairs++;
-    monthlyData[month].revenue += r.chargedPrice;
-    monthlyData[month].cost += r.repairCost;
-    monthlyData[month].profit += r.chargedPrice - r.repairCost;
+    monthlyData[month].revenue += price;
+    monthlyData[month].cost += cost;
+    monthlyData[month].profit += price - cost;
   });
 
   const monthHeader = ws3.addRow(['Month', 'Repairs', 'Revenue (₹)', 'Cost (₹)', 'Profit (₹)']);
@@ -158,7 +184,8 @@ export async function generateExcel(repairs: Repair[]): Promise<Blob> {
   monthHeader.height = 25;
 
   Object.entries(monthlyData).sort((a, b) => a[0].localeCompare(b[0])).forEach(([month, data]) => {
-    const monthName = new Date(month + '-01').toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+    const monthDate = new Date(month + '-01T00:00:00');
+    const monthName = isNaN(monthDate.getTime()) ? month : monthDate.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
     const row = ws3.addRow([monthName, data.repairs, data.revenue, data.cost, data.profit]);
     row.eachCell((cell, colNum) => {
       cell.font = { size: 10 };
@@ -180,9 +207,16 @@ export async function generateExcel(repairs: Repair[]): Promise<Blob> {
 
 export function generateCSV(repairs: Repair[]): string {
   const headers = ['#', 'Date & Time', 'Device Model', 'Repair Cost', 'Charged Price', 'Profit', 'Notes'];
-  const rows = repairs.map((r, idx) => [
-    idx + 1, formatDateForExcel(r.date), `"${r.deviceModel}"`, r.repairCost, r.chargedPrice, r.chargedPrice - r.repairCost, `"${r.notes || ''}"`,
-  ].join(','));
+  const rows = repairs.map((r, idx) => {
+    const cost = safeNumber(r.repairCost);
+    const price = safeNumber(r.chargedPrice);
+    // Escape quotes inside text fields for valid CSV
+    const model = safeText(r.deviceModel).replace(/"/g, '""');
+    const notes = safeText(r.notes).replace(/"/g, '""');
+    return [
+      idx + 1, formatDateForExcel(r.date), `"${model}"`, cost, price, price - cost, `"${notes}"`,
+    ].join(',');
+  });
   return [headers.join(','), ...rows].join('\n');
 }
 

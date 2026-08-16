@@ -1,6 +1,11 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { repairService, getStoredExcelInfo } from '@/database/db';
 
+interface BackupResult {
+  success: boolean;
+  error?: string;
+}
+
 interface BackupContextType {
   isGoogleConnected: boolean;
   lastSyncTime: string | null;
@@ -8,8 +13,8 @@ interface BackupContextType {
   excelFile: { name: string; generatedAt: string } | null;
   connectGoogle: () => Promise<{ success: boolean; error?: string }>;
   disconnectGoogle: () => Promise<void>;
-  backupNow: () => Promise<boolean>;
-  restoreFromBackup: () => Promise<{ success: boolean; added?: number; skipped?: number }>;
+  backupNow: () => Promise<BackupResult>;
+  restoreFromBackup: () => Promise<{ success: boolean; added?: number; skipped?: number; error?: string }>;
   downloadExcelFile: () => Promise<void>;
   downloadCSVFile: () => Promise<void>;
   downloadJSONFile: () => Promise<void>;
@@ -18,6 +23,9 @@ interface BackupContextType {
 
 const BackupContext = createContext<BackupContextType | null>(null);
 
+const AUTH_ERROR_MSG = 'Google session expire ho gaya. Neeche se dobara Connect karein.';
+const NETWORK_ERROR_MSG = 'Upload fail hua. Internet check karke dobara try karein.';
+
 export function BackupProvider({ children }: { children: ReactNode }) {
   const [isGoogleConnected, setIsGoogleConnected] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(localStorage.getItem('fixiprofit_last_sync'));
@@ -25,49 +33,76 @@ export function BackupProvider({ children }: { children: ReactNode }) {
   const [excelFile, setExcelFile] = useState<{ name: string; generatedAt: string } | null>(null);
   const connectedRef = useRef(false);
 
+  const markDisconnected = useCallback(() => {
+    setIsGoogleConnected(false);
+    connectedRef.current = false;
+  }, []);
+
   const loadExcelInfo = useCallback(async () => {
     const info = await getStoredExcelInfo();
     if (info) setExcelFile(info);
   }, []);
 
-  // Check connection on mount
+  // On mount: don't just trust the stored token - validate it with Google and
+  // silently refresh if expired, so the ON/OFF status is always honest.
   useEffect(() => {
     loadExcelInfo();
-    import('@/utils/googleDrive').then(({ googleDriveService }) => {
-      const connected = googleDriveService.isConnected();
+    import('@/utils/googleDrive').then(async ({ googleDriveService }) => {
+      let connected = googleDriveService.isConnected();
+      if (connected) {
+        connected = await googleDriveService.ensureConnected();
+      }
       setIsGoogleConnected(connected);
       connectedRef.current = connected;
     });
   }, [loadExcelInfo]);
 
-  const backupNow = useCallback(async (): Promise<boolean> => {
+  const backupNow = useCallback(async (): Promise<BackupResult> => {
     setIsSyncing(true);
     try {
       const { googleDriveService } = await import('@/utils/googleDrive');
       const { generateExcel, generateCSV, generateJSON } = await import('@/utils/excelExport');
       const repairs = await repairService.exportAll();
-      const excelBlob = await generateExcel(repairs);
+
+      // JSON is the real backup - always generate it first.
+      // Excel/CSV are extras: if they fail for any reason (e.g. a weird old
+      // record), the JSON backup must still go through.
       const jsonData = generateJSON(repairs);
-      const csvData = generateCSV(repairs);
-
-      // Ensure connected (tries silent refresh)
-      await googleDriveService.ensureConnected();
-
-      if (googleDriveService.isConnected()) {
-        const success = await googleDriveService.uploadBackupFiles(excelBlob, jsonData, csvData);
-        if (success) {
-          const now = new Date().toISOString();
-          setLastSyncTime(now);
-          localStorage.setItem('fixiprofit_last_sync', now);
-          setIsGoogleConnected(true);
-          connectedRef.current = true;
-        }
-        return success;
+      let excelBlob: Blob | null = null;
+      try {
+        excelBlob = await generateExcel(repairs);
+      } catch (e) {
+        console.error('Excel generation failed - JSON backup will still continue:', e);
       }
-      return false;
-    } catch { return false; }
+      let csvData = '';
+      try {
+        csvData = generateCSV(repairs);
+      } catch (e) {
+        console.error('CSV generation failed:', e);
+      }
+
+      const result = await googleDriveService.uploadBackupFiles(excelBlob, jsonData, csvData);
+
+      if (result === 'auth') {
+        markDisconnected();
+        return { success: false, error: AUTH_ERROR_MSG };
+      }
+      if (result === 'error') {
+        const detail = googleDriveService.getLastError();
+        return { success: false, error: detail ? `${NETWORK_ERROR_MSG} (${detail})` : NETWORK_ERROR_MSG };
+      }
+
+      const now = new Date().toISOString();
+      setLastSyncTime(now);
+      localStorage.setItem('fixiprofit_last_sync', now);
+      setIsGoogleConnected(true);
+      connectedRef.current = true;
+      return { success: true };
+    } catch {
+      return { success: false, error: 'Backup fail hua. Dobara try karein.' };
+    }
     finally { setIsSyncing(false); }
-  }, []);
+  }, [markDisconnected]);
 
   // Daily backup at 2 AM
   useEffect(() => {
@@ -109,25 +144,36 @@ export function BackupProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('fixiprofit_last_sync');
   }, []);
 
-  const restoreFromBackup = useCallback(async (): Promise<{ success: boolean; added?: number; skipped?: number }> => {
+  const restoreFromBackup = useCallback(async (): Promise<{ success: boolean; added?: number; skipped?: number; error?: string }> => {
     setIsSyncing(true);
     try {
-      const { googleDriveService } = await import('@/utils/googleDrive');
+      const { googleDriveService, DriveAuthError } = await import('@/utils/googleDrive');
       await googleDriveService.ensureConnected();
-      if (googleDriveService.isConnected()) {
-        const str = await googleDriveService.downloadJSONBackup();
-        if (str) {
-          const data = JSON.parse(str);
-          if (data.repairs) {
-            const result = await repairService.importAll(data.repairs);
-            return { success: true, added: result.added, skipped: result.skipped };
-          }
+      if (!googleDriveService.isConnected()) {
+        markDisconnected();
+        return { success: false, error: AUTH_ERROR_MSG };
+      }
+      const str = await googleDriveService.downloadJSONBackup().catch((e: unknown) => {
+        if (e instanceof DriveAuthError) { markDisconnected(); throw e; }
+        throw e;
+      });
+      if (str) {
+        const data = JSON.parse(str);
+        if (Array.isArray(data.repairs)) {
+          const result = await repairService.importAll(data.repairs);
+          return { success: true, added: result.added, skipped: result.skipped };
         }
       }
-      return { success: false };
-    } catch { return { success: false }; }
+      return { success: false, error: 'Drive me koi backup file nahi mili.' };
+    } catch (e: any) {
+      if (e?.name === 'DriveAuthError') {
+        markDisconnected();
+        return { success: false, error: AUTH_ERROR_MSG };
+      }
+      return { success: false, error: 'Restore fail hua. Dobara try karein.' };
+    }
     finally { setIsSyncing(false); }
-  }, []);
+  }, [markDisconnected]);
 
   const downloadExcelFile = useCallback(async () => {
     setIsSyncing(true);
