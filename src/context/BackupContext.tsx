@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
-import { repairService, getStoredExcelInfo } from '@/database/db';
+import { exportAllData, importAllData, generateExcelOnDemand, getStoredExcelInfo } from '@/database/db';
 
 interface BackupResult {
   success: boolean;
@@ -14,7 +14,7 @@ interface BackupContextType {
   connectGoogle: () => Promise<{ success: boolean; error?: string }>;
   disconnectGoogle: () => Promise<void>;
   backupNow: () => Promise<BackupResult>;
-  restoreFromBackup: () => Promise<{ success: boolean; added?: number; skipped?: number; error?: string }>;
+  restoreFromBackup: () => Promise<{ success: boolean; items?: number; error?: string }>;
   downloadExcelFile: () => Promise<void>;
   downloadCSVFile: () => Promise<void>;
   downloadJSONFile: () => Promise<void>;
@@ -28,7 +28,7 @@ const NETWORK_ERROR_MSG = 'Upload fail hua. Internet check karke dobara try kare
 
 export function BackupProvider({ children }: { children: ReactNode }) {
   const [isGoogleConnected, setIsGoogleConnected] = useState(false);
-  const [lastSyncTime, setLastSyncTime] = useState<string | null>(localStorage.getItem('fixiprofit_last_sync'));
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(localStorage.getItem('stockverify_last_sync'));
   const [isSyncing, setIsSyncing] = useState(false);
   const [excelFile, setExcelFile] = useState<{ name: string; generatedAt: string } | null>(null);
   const connectedRef = useRef(false);
@@ -61,22 +61,21 @@ export function BackupProvider({ children }: { children: ReactNode }) {
     setIsSyncing(true);
     try {
       const { googleDriveService } = await import('@/utils/googleDrive');
-      const { generateExcel, generateCSV, generateJSON } = await import('@/utils/excelExport');
-      const repairs = await repairService.exportAll();
+      const { generateExcel, generateJSON, generateCSV } = await import('@/utils/inventoryExport');
 
       // JSON is the real backup - always generate it first.
-      // Excel/CSV are extras: if they fail for any reason (e.g. a weird old
-      // record), the JSON backup must still go through.
-      const jsonData = generateJSON(repairs);
+      // Excel/CSV are extras: if they fail for any reason, the JSON backup
+      // must still go through.
+      const jsonData = await generateJSON();
       let excelBlob: Blob | null = null;
       try {
-        excelBlob = await generateExcel(repairs);
+        excelBlob = await generateExcel();
       } catch (e) {
         console.error('Excel generation failed - JSON backup will still continue:', e);
       }
       let csvData = '';
       try {
-        csvData = generateCSV(repairs);
+        csvData = await generateCSV();
       } catch (e) {
         console.error('CSV generation failed:', e);
       }
@@ -94,7 +93,7 @@ export function BackupProvider({ children }: { children: ReactNode }) {
 
       const now = new Date().toISOString();
       setLastSyncTime(now);
-      localStorage.setItem('fixiprofit_last_sync', now);
+      localStorage.setItem('stockverify_last_sync', now);
       setIsGoogleConnected(true);
       connectedRef.current = true;
       return { success: true };
@@ -141,10 +140,10 @@ export function BackupProvider({ children }: { children: ReactNode }) {
     setIsGoogleConnected(false);
     connectedRef.current = false;
     setLastSyncTime(null);
-    localStorage.removeItem('fixiprofit_last_sync');
+    localStorage.removeItem('stockverify_last_sync');
   }, []);
 
-  const restoreFromBackup = useCallback(async (): Promise<{ success: boolean; added?: number; skipped?: number; error?: string }> => {
+  const restoreFromBackup = useCallback(async (): Promise<{ success: boolean; items?: number; error?: string }> => {
     setIsSyncing(true);
     try {
       const { googleDriveService, DriveAuthError } = await import('@/utils/googleDrive');
@@ -159,9 +158,9 @@ export function BackupProvider({ children }: { children: ReactNode }) {
       });
       if (str) {
         const data = JSON.parse(str);
-        if (Array.isArray(data.repairs)) {
-          const result = await repairService.importAll(data.repairs);
-          return { success: true, added: result.added, skipped: result.skipped };
+        if (Array.isArray(data.items)) {
+          const result = await importAllData(data);
+          return { success: true, items: result.items };
         }
       }
       return { success: false, error: 'Drive me koi backup file nahi mili.' };
@@ -179,9 +178,8 @@ export function BackupProvider({ children }: { children: ReactNode }) {
     setIsSyncing(true);
     try {
       const { saveAs } = await import('file-saver');
-      const { generateExcelOnDemand } = await import('@/database/db');
       const result = await generateExcelOnDemand();
-      if (result) { saveAs(result.blob, 'FixiProfit.xlsx'); setExcelFile({ name: 'FixiProfit.xlsx', generatedAt: result.generatedAt }); }
+      if (result) { saveAs(result.blob, 'StockVerify.xlsx'); setExcelFile({ name: 'StockVerify.xlsx', generatedAt: result.generatedAt }); }
     } finally { setIsSyncing(false); }
   }, []);
 
@@ -189,9 +187,8 @@ export function BackupProvider({ children }: { children: ReactNode }) {
     setIsSyncing(true);
     try {
       const { saveAs } = await import('file-saver');
-      const { generateCSV } = await import('@/utils/excelExport');
-      const repairs = await repairService.exportAll();
-      saveAs(new Blob([generateCSV(repairs)], { type: 'text/csv' }), 'FixiProfit.csv');
+      const { generateCSV } = await import('@/utils/inventoryExport');
+      saveAs(new Blob(['\uFEFF' + (await generateCSV()).replace(/^\uFEFF/, '')], { type: 'text/csv' }), 'StockVerify.csv');
     } finally { setIsSyncing(false); }
   }, []);
 
@@ -199,16 +196,15 @@ export function BackupProvider({ children }: { children: ReactNode }) {
     setIsSyncing(true);
     try {
       const { saveAs } = await import('file-saver');
-      const { generateJSON } = await import('@/utils/excelExport');
-      const repairs = await repairService.exportAll();
-      saveAs(new Blob([generateJSON(repairs)], { type: 'application/json' }), 'FixiProfit.json');
+      const { generateJSON } = await import('@/utils/inventoryExport');
+      saveAs(new Blob([await generateJSON()], { type: 'application/json' }), 'StockVerify.json');
     } finally { setIsSyncing(false); }
   }, []);
 
   const importFromJSON = useCallback(async (file: File) => {
     try {
       const data = JSON.parse(await file.text());
-      if (data.repairs && Array.isArray(data.repairs)) { await repairService.importAll(data.repairs); return true; }
+      if (data.items && Array.isArray(data.items)) { await importAllData(data); return true; }
       return false;
     } catch { return false; }
   }, []);

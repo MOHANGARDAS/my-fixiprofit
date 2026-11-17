@@ -3,11 +3,14 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Layout } from '@/components/layout/Layout';
 import { BackupProvider } from '@/context/BackupContext';
 
-const Dashboard = lazy(() => import('@/pages/Dashboard').then(m => ({ default: m.Dashboard })));
+const Home = lazy(() => import('@/pages/Home').then(m => ({ default: m.Home })));
+const Items = lazy(() => import('@/pages/Items').then(m => ({ default: m.Items })));
+const ItemForm = lazy(() => import('@/pages/ItemForm').then(m => ({ default: m.ItemForm })));
+const TallyImport = lazy(() => import('@/pages/TallyImport').then(m => ({ default: m.TallyImport })));
+const CountSessions = lazy(() => import('@/pages/CountSessions').then(m => ({ default: m.CountSessions })));
+const CountActive = lazy(() => import('@/pages/CountActive').then(m => ({ default: m.CountActive })));
+const CountReview = lazy(() => import('@/pages/CountReview').then(m => ({ default: m.CountReview })));
 const History = lazy(() => import('@/pages/History').then(m => ({ default: m.History })));
-const AddRepair = lazy(() => import('@/pages/AddRepair').then(m => ({ default: m.AddRepair })));
-const Reports = lazy(() => import('@/pages/Reports').then(m => ({ default: m.Reports })));
-const EditRepair = lazy(() => import('@/pages/EditRepair').then(m => ({ default: m.EditRepair })));
 const Settings = lazy(() => import('@/pages/Settings').then(m => ({ default: m.Settings })));
 
 function LoadingFallback() {
@@ -25,11 +28,15 @@ export default function App() {
         <Layout>
           <Suspense fallback={<LoadingFallback />}>
             <Routes>
-              <Route path="/" element={<Dashboard />} />
+              <Route path="/" element={<Home />} />
+              <Route path="/items" element={<Items />} />
+              <Route path="/items/new" element={<ItemForm />} />
+              <Route path="/items/:id/edit" element={<ItemForm />} />
+              <Route path="/import" element={<TallyImport />} />
+              <Route path="/count" element={<CountSessions />} />
+              <Route path="/count/:id" element={<CountActive />} />
+              <Route path="/count/:id/review" element={<CountReview />} />
               <Route path="/history" element={<History />} />
-              <Route path="/add" element={<AddRepair />} />
-              <Route path="/reports" element={<Reports />} />
-              <Route path="/edit/:id" element={<EditRepair />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

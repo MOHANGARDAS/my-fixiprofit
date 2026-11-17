@@ -1,4 +1,4 @@
-# 🚀 FixiProfit PWA - Deployment Guide
+# 🚀 StockVerify PWA - Deployment Guide
 
 ## 📋 Prerequisites
 
@@ -16,7 +16,7 @@
 # Git initialize karo (agar nahi hai)
 git init
 git add .
-git commit -m "Initial commit - FixiProfit PWA"
+git commit -m "Initial commit - StockVerify PWA"
 
 # GitHub pe repository banao (github.com pe jaake)
 # Fir remote add karo
@@ -104,7 +104,7 @@ npm run build
 ### Step 1: Google Cloud Console
 
 1. **console.cloud.google.com pe jao**
-2. **New Project create karo** → "FixiProfit"
+2. **New Project create karo** → "StockVerify"
 3. **"APIs & Services" → "Library"**
 4. **"Google Drive API" search karo** → **Enable** karo
 
@@ -113,7 +113,7 @@ npm run build
 1. **"APIs & Services" → "Credentials"**
 2. **"Create Credentials" → "OAuth client ID"**
 3. **Application type** → **"Web application"**
-4. **Name** → "FixiProfit PWA"
+4. **Name** → "StockVerify PWA"
 5. **Authorized JavaScript origins** add karo:
    ```
    http://localhost:5173
@@ -210,7 +210,7 @@ npm run preview
 3. Google account select karo
 4. Permission allow karo
 5. "Backup Now" click karo
-6. Google Drive pe jao → "FixiProfit_Backup" folder check karo
+6. Google Drive pe jao → "StockVerify_Backup" folder check karo
 7. Excel/JSON/CSV files honi chahiye!
 
 ---

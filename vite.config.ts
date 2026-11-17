@@ -13,9 +13,9 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'icons/*.png'],
       manifest: {
-        name: 'FixiProfit - Repair Shop Manager',
-        short_name: 'FixiProfit',
-        description: 'Professional repair shop management app',
+        name: 'StockVerify - Inventory & Stock Verification',
+        short_name: 'StockVerify',
+        description: 'Tally stock import + physical stock verification app',
         theme_color: '#0f172a',
         background_color: '#0f172a',
         display: 'standalone',
@@ -112,9 +112,7 @@ export default defineConfig({
       output: {
         manualChunks: {
           'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-          'vendor-query': ['@tanstack/react-query'],
           'vendor-motion': ['framer-motion'],
-          'vendor-charts': ['recharts'],
           'vendor-excel': ['exceljs', 'file-saver'],
           'vendor-db': ['dexie', 'dexie-react-hooks'],
           'vendor-icons': ['lucide-react'],

@@ -1,11 +1,14 @@
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Home, Clock, PlusCircle, BarChart3, Settings, Wrench } from 'lucide-react';
+import {
+  LayoutDashboard, Package, Upload, ClipboardCheck, History, Settings, PackageCheck,
+} from 'lucide-react';
 
 const navItems = [
-  { path: '/', icon: Home, label: 'Dashboard' },
-  { path: '/history', icon: Clock, label: 'History' },
-  { path: '/add', icon: PlusCircle, label: 'Add Repair' },
-  { path: '/reports', icon: BarChart3, label: 'Reports' },
+  { path: '/', icon: LayoutDashboard, label: 'Home' },
+  { path: '/items', icon: Package, label: 'Stock Items' },
+  { path: '/import', icon: Upload, label: 'Tally Import' },
+  { path: '/count', icon: ClipboardCheck, label: 'Count Sessions' },
+  { path: '/history', icon: History, label: 'History' },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ];
 
@@ -19,11 +22,11 @@ export function Sidebar() {
       <div className="px-5 mb-6">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 bg-primary-500 rounded-xl flex items-center justify-center shadow-lg shadow-primary-500/20">
-            <Wrench size={18} className="text-white" />
+            <PackageCheck size={18} className="text-white" />
           </div>
           <div>
-            <span className="text-sm font-bold text-white">FixiProfit</span>
-            <p className="text-[10px] text-dark-500">Repair Manager</p>
+            <span className="text-sm font-bold text-white">StockVerify</span>
+            <p className="text-[10px] text-dark-500">Inventory & Stock Audit</p>
           </div>
         </div>
       </div>
@@ -31,7 +34,7 @@ export function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 px-3 space-y-1">
         {navItems.map((item) => {
-          const isActive = location.pathname === item.path;
+          const isActive = item.path === '/' ? location.pathname === '/' : location.pathname.startsWith(item.path);
 
           return (
             <button
@@ -52,8 +55,8 @@ export function Sidebar() {
 
       {/* Footer */}
       <div className="px-5 pt-4 border-t border-dark-700/50">
-        <p className="text-[10px] text-dark-600">FixiProfit v1.0.0</p>
-        <p className="text-[10px] text-dark-600">Repair Shop PWA</p>
+        <p className="text-[10px] text-dark-600">StockVerify v2.0.0</p>
+        <p className="text-[10px] text-dark-600">Tally + Physical Verification</p>
       </div>
     </aside>
   );

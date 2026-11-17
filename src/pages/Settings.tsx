@@ -3,9 +3,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Cloud, Shield, Download, Upload, Trash2,
   AlertTriangle, FileSpreadsheet, FileText, FileJson,
-  CheckCircle, XCircle, RefreshCw, CloudOff
+  CheckCircle, XCircle, RefreshCw, CloudOff, Info,
 } from 'lucide-react';
 import { useBackup } from '@/context/BackupContext';
+import { db } from '@/database/db';
 
 export function Settings() {
   const {
@@ -23,13 +24,11 @@ export function Settings() {
     importFromJSON,
   } = useBackup();
 
-  const [clearStep, setClearStep] = useState<0 | 1 | 2 | 3>(0);
+  const [clearStep, setClearStep] = useState<0 | 1 | 2>(0);
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [isExporting, setIsExporting] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const jsonInputRef = useRef<HTMLInputElement>(null);
-
-  // Connection status is managed by BackupContext - no need for separate check
 
   const showStatus = (type: 'success' | 'error' | 'info', text: string) => {
     setStatusMsg({ type, text });
@@ -53,7 +52,7 @@ export function Settings() {
     showStatus('info', 'Restoring...');
     const result = await restoreFromBackup();
     if (result.success) {
-      showStatus('success', `Added: ${result.added || 0} | Skipped duplicates: ${result.skipped || 0}`);
+      showStatus('success', `Restored: ${result.items ?? 0} items`);
     } else {
       showStatus('error', result.error || 'No backup found');
     }
@@ -80,10 +79,10 @@ export function Settings() {
   };
 
   const handleClearAll = async () => {
-    const { db } = await import('@/database/db');
-    await db.repairs.clear();
+    await db.delete();
+    localStorage.removeItem('stockverify_last_sync');
     setClearStep(0);
-    showStatus('success', 'All data cleared');
+    location.reload();
   };
 
   return (
@@ -256,33 +255,27 @@ export function Settings() {
           </div>
           <div>
             <h3 className="text-sm font-semibold text-red-400">Danger Zone</h3>
-            <p className="text-xs text-dark-400">Clear all data</p>
+            <p className="text-xs text-dark-400">Reset app - all data delete</p>
           </div>
         </div>
 
         {clearStep === 0 && (
           <button onClick={() => setClearStep(1)}
             className="btn-secondary w-full flex items-center justify-center gap-2 text-red-400 border-red-500/20 text-sm">
-            <Trash2 size={16} /> Reset Data
+            <Trash2 size={16} /> Reset App Data
           </button>
         )}
 
         {clearStep === 1 && (
           <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
             className="p-3 bg-red-500/5 border border-red-500/20 rounded-xl space-y-2">
-            <p className="text-xs text-red-400">This will reset all repair records!</p>
-            <div className="flex gap-2">
-              <button onClick={() => setClearStep(0)} className="btn-secondary flex-1 text-xs py-2">Cancel</button>
-              <button onClick={() => setClearStep(2)} className="btn-danger flex-1 text-xs py-2">Clear Data →</button>
+            <div className="flex items-start gap-2">
+              <Info size={14} className="text-orange-400 mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-dark-300">
+                Items, count sessions, adjustments - sab delete hoga.
+                Pehle Drive backup lena behtar rahega!
+              </p>
             </div>
-          </motion.div>
-        )}
-
-        {clearStep === 2 && (
-          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
-            className="p-3 bg-red-500/5 border border-red-500/20 rounded-xl space-y-2">
-            <p className="text-xs text-red-400 font-semibold">⚠️ Final Warning!</p>
-            <p className="text-[10px] text-dark-400">All repairs will be permanently deleted. This cannot be undone!</p>
             <div className="flex gap-2">
               <button onClick={() => setClearStep(0)} className="btn-secondary flex-1 text-xs py-2">Cancel</button>
               <button onClick={handleClearAll} className="btn-danger flex-1 text-xs py-2">Delete All</button>
@@ -290,6 +283,9 @@ export function Settings() {
           </motion.div>
         )}
       </div>
+
+      {/* App info */}
+      <p className="text-center text-[10px] text-dark-600">StockVerify v2.0 · Inventory & Physical Stock Verification</p>
     </motion.div>
   );
 }

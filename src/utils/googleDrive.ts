@@ -4,9 +4,9 @@
 // refreshing the token once and retrying the request.
 const DEFAULT_CLIENT_ID = '60102706527-qmh7shod0emgocefv6nb6uga8vpp90n9.apps.googleusercontent.com';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
-const APP_FOLDER_NAME = 'FixiProfit_Backup';
-const TOKEN_KEY = 'fixiprofit_google_token';
-const TOKEN_EXPIRY_KEY = 'fixiprofit_google_token_expiry';
+const APP_FOLDER_NAME = 'StockVerify_Backup';
+const TOKEN_KEY = 'stockverify_google_token';
+const TOKEN_EXPIRY_KEY = 'stockverify_google_token_expiry';
 
 let tokenClient: any = null;
 let accessToken: string | null = null;
@@ -244,12 +244,12 @@ export const googleDriveService = {
       // Excel/CSV are human-readable extras: uploaded best-effort, they must
       // never block or fail the actual data backup.
       const uploads: Promise<boolean>[] = [
-        uploadFile('FixiProfit_Latest.json', 'application/json', jsonData),
+        uploadFile('StockVerify_Latest.json', 'application/json', jsonData),
       ];
       if (excelBlob) {
-        uploads.push(uploadFile('FixiProfit_Latest.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', excelBlob).catch(() => false));
+        uploads.push(uploadFile('StockVerify_Latest.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', excelBlob).catch(() => false));
       }
-      uploads.push(uploadFile('FixiProfit_Latest.csv', 'text/csv', csvData).catch(() => false));
+      uploads.push(uploadFile('StockVerify_Latest.csv', 'text/csv', csvData).catch(() => false));
       const results = await Promise.all(uploads);
       if (results[0]) return 'ok';
       if (!lastDriveError) lastDriveError = 'JSON upload fail';
@@ -271,6 +271,6 @@ export const googleDriveService = {
       const ok = await trySilentRefresh();
       if (!ok) throw new DriveAuthError();
     }
-    return downloadFile('FixiProfit_Latest.json');
+    return downloadFile('StockVerify_Latest.json');
   },
 };
