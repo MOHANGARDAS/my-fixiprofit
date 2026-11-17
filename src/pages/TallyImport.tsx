@@ -3,16 +3,22 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   Upload, FileSpreadsheet, CheckCircle2, AlertTriangle, ArrowRight,
-  RefreshCw, ArrowLeft, Replace, GitMerge,
+  RefreshCw, ArrowLeft, Replace, GitMerge, CloudDownload, Cloud,
 } from 'lucide-react';
 import { parseTallyFile, type ParseResult } from '@/utils/tallyParser';
 import { importService } from '@/database/db';
+import {
+  getSavedMasterFile, saveMasterFile, pickDriveFile, fetchDriveFileAsFile,
+  type DriveSourceFile,
+} from '@/utils/driveImport';
+import { useBackup } from '@/context/BackupContext';
 import { formatQty, formatDateTime } from '@/utils/dateUtils';
 
 type Stage = 'upload' | 'preview' | 'done';
 
 export function TallyImport() {
   const navigate = useNavigate();
+  const { isGoogleConnected, connectGoogle } = useBackup();
   const fileInput = useRef<HTMLInputElement>(null);
   const [stage, setStage] = useState<Stage>('upload');
   const [parsing, setParsing] = useState(false);
@@ -24,6 +30,11 @@ export function TallyImport() {
   const [doneInfo, setDoneInfo] = useState<{ itemCount: number; newItems?: number; updatedItems?: number } | null>(null);
   const [showAllPreview, setShowAllPreview] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+
+  // Google Drive master inventory
+  const [savedDriveFile, setSavedDriveFile] = useState<DriveSourceFile | null>(getSavedMasterFile());
+  const [driveBusy, setDriveBusy] = useState<null | 'picker' | 'download'>(null);
+  const [driveError, setDriveError] = useState('');
 
   const handleFile = async (f: File) => {
     setFile(f);
@@ -47,6 +58,49 @@ export function TallyImport() {
     setDragOver(false);
     const f = e.dataTransfer.files?.[0];
     if (f) handleFile(f);
+  };
+
+  // ---------- Google Drive import ----------
+  const importFromDrive = async (pickNew: boolean) => {
+    setDriveError('');
+    let src: DriveSourceFile | null = pickNew ? null : getSavedMasterFile();
+
+    if (!src) {
+      setDriveBusy('picker');
+      try {
+        if (!isGoogleConnected) {
+          const c = await connectGoogle();
+          if (!c.success) {
+            setDriveError(c.error || 'Google connect nahi hua');
+            setDriveBusy(null);
+            return;
+          }
+        }
+        const picked = await pickDriveFile();
+        if (!picked) { setDriveBusy(null); return; } // user cancelled
+        src = { id: picked.id, name: picked.name, savedAt: new Date().toISOString() };
+      } catch (e: any) {
+        setDriveError(
+          e?.name === 'DriveAuthError'
+            ? 'Google session expire ho gaya - Settings me dobara Connect karein.'
+            : e?.message || 'Drive Picker open nahi hua'
+        );
+        setDriveBusy(null);
+        return;
+      }
+    }
+
+    setDriveBusy('download');
+    try {
+      const driveFile = await fetchDriveFileAsFile(src.id, src.name);
+      saveMasterFile(src.id, src.name);
+      setSavedDriveFile({ ...src });
+      setDriveBusy(null);
+      await handleFile(driveFile);
+    } catch (e: any) {
+      setDriveError(e?.message || 'Drive se file download nahi hui. "Change File" se dobara select karein.');
+      setDriveBusy(null);
+    }
   };
 
   const runImport = async () => {
@@ -94,13 +148,83 @@ export function TallyImport() {
       {/* ===== Upload stage ===== */}
       {stage === 'upload' && (
         <>
-          <div className="card space-y-3">
+          {/* Google Drive master inventory */}
+          <div className="card space-y-3 border-blue-500/20">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center">
-                <FileSpreadsheet size={20} className="text-blue-400" />
+                <CloudDownload size={20} className="text-blue-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-sm font-semibold text-white">Google Drive se Master Inventory</h3>
+                <p className="text-xs text-dark-400">Drive me rakhi stock file seedha import karein</p>
+              </div>
+              {isGoogleConnected && (
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+                  <span className="text-[10px] text-green-400 font-medium">ON</span>
+                </div>
+              )}
+            </div>
+
+            {savedDriveFile && (
+              <div className="flex items-center gap-2 p-3 bg-dark-800 rounded-xl border border-dark-700">
+                <FileSpreadsheet size={16} className="text-green-400 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-dark-200 truncate">{savedDriveFile.name}</p>
+                  <p className="text-[9px] text-dark-500">Saved · {formatDateTime(savedDriveFile.savedAt)}</p>
+                </div>
+              </div>
+            )}
+
+            {!savedDriveFile && (
+              <p className="text-[11px] text-dark-400">
+                Google Drive picker khulega - apni master inventory file (Excel/CSV) select karein.
+                Ek baar select karne par app file ko yaad rakhta hai, fir ek tap me re-import hota hai.
+              </p>
+            )}
+
+            {driveError && (
+              <div className="p-2.5 bg-red-500/10 border border-red-500/20 rounded-xl flex items-start gap-2">
+                <AlertTriangle size={13} className="text-red-400 mt-0.5 flex-shrink-0" />
+                <p className="text-[11px] text-red-400">{driveError}</p>
+              </div>
+            )}
+
+            <button
+              onClick={() => importFromDrive(!!savedDriveFile ? false : true)}
+              disabled={driveBusy !== null || parsing}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold bg-blue-500 hover:bg-blue-600 text-white shadow-lg shadow-blue-500/20 transition-all disabled:opacity-50"
+            >
+              {driveBusy === 'picker' ? (
+                <><RefreshCw size={15} className="animate-spin" /> Drive picker khul raha hai...</>
+              ) : driveBusy === 'download' ? (
+                <><RefreshCw size={15} className="animate-spin" /> Drive se download ho rahi hai...</>
+              ) : savedDriveFile ? (
+                <><CloudDownload size={15} /> Import from Drive</>
+              ) : (
+                <><Cloud size={15} /> Choose File from Drive</>
+              )}
+            </button>
+
+            {savedDriveFile && (
+              <button
+                onClick={() => importFromDrive(true)}
+                disabled={driveBusy !== null || parsing}
+                className="w-full text-[11px] text-dark-400 hover:text-white py-1"
+              >
+                Change File...
+              </button>
+            )}
+          </div>
+
+          {/* Manual upload */}
+          <div className="card space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-dark-700 rounded-xl flex items-center justify-center">
+                <FileSpreadsheet size={20} className="text-dark-300" />
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-white">Tally se Stock Import</h3>
+                <h3 className="text-sm font-semibold text-white">Ya File Upload Karein</h3>
                 <p className="text-xs text-dark-400">Tally Stock Summary export (Excel / CSV)</p>
               </div>
             </div>

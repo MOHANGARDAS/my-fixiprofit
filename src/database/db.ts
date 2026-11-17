@@ -236,12 +236,33 @@ export const sessionService = {
 // ============================================================
 // Tally import service
 // ============================================================
+
+/** Merge duplicate item names (same item can appear twice in exports) - quantities add up */
+function consolidateParsed(parsed: ParsedTallyItem[]): ParsedTallyItem[] {
+  const byKey = new Map<string, ParsedTallyItem>();
+  for (const p of parsed) {
+    const key = nameKeyOf(p.name);
+    const ex = byKey.get(key);
+    if (ex) {
+      ex.qty += p.qty;
+      ex.rate = ex.rate ?? p.rate;
+      ex.unit = ex.unit ?? p.unit;
+      ex.group = ex.group ?? p.group;
+      ex.hsn = ex.hsn ?? p.hsn;
+    } else {
+      byKey.set(key, { ...p });
+    }
+  }
+  return [...byKey.values()];
+}
+
 export const importService = {
   /**
    * Replace mode: wipe item master, import fresh from Tally.
    */
-  async replaceAll(parsed: ParsedTallyItem[], fileName: string): Promise<{ itemCount: number; totalQty: number }> {
+  async replaceAll(parsedRaw: ParsedTallyItem[], fileName: string): Promise<{ itemCount: number; totalQty: number }> {
     const now = new Date().toISOString();
+    const parsed = consolidateParsed(parsedRaw);
     const items: Item[] = parsed.map(p => ({
       name: p.name,
       nameKey: nameKeyOf(p.name),
@@ -276,8 +297,9 @@ export const importService = {
    * - new       -> added
    * In-app only items (not in Tally) are kept untouched.
    */
-  async merge(parsed: ParsedTallyItem[], fileName: string): Promise<{ itemCount: number; newItems: number; updatedItems: number }> {
+  async merge(parsedRaw: ParsedTallyItem[], fileName: string): Promise<{ itemCount: number; newItems: number; updatedItems: number }> {
     const now = new Date().toISOString();
+    const parsed = consolidateParsed(parsedRaw);
     let newItems = 0, updatedItems = 0;
 
     await db.transaction('rw', db.items, db.tallyImports, async () => {

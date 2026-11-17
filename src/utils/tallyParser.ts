@@ -2,10 +2,18 @@ import ExcelJS from 'exceljs';
 
 // ============================================================
 // Tally export parser (CSV / XLSX / XLS)
-// Tally "Stock Summary" exports come in many shapes:
-//   - with headers:  Stock Item | Quantity | Rate | Value | Group ...
-//   - without headers: item rows directly, qty like "150.00 Pc"
-//   - group headers + total rows sprinkled in between
+// Tally "Stock Summary" exports come in several shapes:
+//   1. Simple: one header row -> Stock Item | Quantity | Rate | Value
+//   2. No header: item rows directly, qty like "150.00 Pc"
+//   3. Tally Excel stock summary (the common one):
+//        company header rows...
+//        Particulars | Particulars | <period>
+//                                  | Closing Balance
+//                                  | Quantity | Rate | Value
+//        ITEM NAME  | ITEM NAME  | qty | rate | value   <- item row (name duplicated A:B)
+//        batch      | godown/bin | qty | rate | value   <- sub row (A != B) -> skip
+//        ·          | godown     | qty | rate | value   <- godown row -> skip
+//        Grand Total| Grand Total| qty |      | value
 // This parser is deliberately tolerant of all of that.
 // ============================================================
 
@@ -34,6 +42,8 @@ export interface ParseResult {
   columnMapping: ColumnMapping | null;
   headerRow: number; // -1 = no header found, heuristic mode
   totalRows: number;
+  /** rows skipped as batch/godown sub-rows (Tally stock summary mode) */
+  skippedSubRows: number;
 }
 
 // ---------- low level helpers ----------
@@ -102,8 +112,7 @@ function parseCsvText(text: string): string[][] {
   return rows.filter(r => r.some(c => String(c).trim() !== ''));
 }
 
-async function readWorkbookRows(file: File): Promise<{ rows: string[][]; sheetName?: string }> {
-  const buf = await file.arrayBuffer();
+async function readWorkbookRows(buf: ArrayBuffer): Promise<{ rows: string[][]; sheetName?: string }> {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buf);
   const ws = wb.worksheets[0];
@@ -149,6 +158,14 @@ const HEADER_HINTS: Record<keyof Omit<ColumnMapping, 'name'> | 'name', string[]>
   hsn: ['hsn', 'hsn/sac', 'sac', 'code', 'part no', 'part-no', 'sku'],
 };
 
+/** True if the cell looks like a plain number (not header text) */
+function isNumericCell(v: unknown): boolean {
+  if (v == null) return false;
+  const s = String(v).trim();
+  if (!s) return false;
+  return parseNumber(s) != null && /^[\s\d,.\-()]+$/.test(s);
+}
+
 function scoreHeaderRow(row: string[]): { score: number; mapping: Partial<ColumnMapping> } {
   const mapping: Partial<ColumnMapping> = {};
   let score = 0;
@@ -167,16 +184,61 @@ function scoreHeaderRow(row: string[]): { score: number; mapping: Partial<Column
   return { score, mapping };
 }
 
-function findHeader(rows: string[][]): { headerRow: number; mapping: Partial<ColumnMapping> } {
-  let best = { headerRow: -1, score: 0, mapping: {} as Partial<ColumnMapping> };
-  const limit = Math.min(rows.length, 12);
-  for (let i = 0; i < limit; i++) {
-    const { score, mapping } = scoreHeaderRow(rows[i]);
-    if (score > best.score) best = { headerRow: i, score, mapping };
+/**
+ * Detect a header, including Tally's multi-row header:
+ *   R12: Particulars | Particulars | <period>
+ *   R13:            |             | Closing Balance
+ *   R14:            |             | Quantity | Rate | Value
+ * The name column comes from the first hint row; qty/rate/value may sit on
+ * later rows within a small window. Only text cells are treated as headers.
+ */
+function detectHeader(rows: string[][]): { headerRow: number; mapping: Partial<ColumnMapping> } {
+  const limit = Math.min(rows.length, 16);
+  let nameRow = -1, nameIdx = -1;
+  for (let r = 0; r < limit; r++) {
+    const cells = rows[r];
+    for (let c = 0; c < cells.length; c++) {
+      const cell = String(cells[c] || '').toLowerCase().trim();
+      if (!cell || cell.length > 40) continue;
+      if (HEADER_HINTS.name.some(h => cell === h || cell.startsWith(h))) { nameRow = r; nameIdx = c; break; }
+    }
+    if (nameRow >= 0) break;
   }
-  // Need at least a name + qty-ish column to trust the header
-  if (best.headerRow >= 0 && best.score >= 2 && best.mapping.name != null) {
-    return { headerRow: best.headerRow, mapping: best.mapping };
+  if (nameRow < 0) return { headerRow: -1, mapping: {} };
+
+  const mapping: Partial<ColumnMapping> = { name: nameIdx };
+  let lastHeaderRow = nameRow;
+  const winEnd = Math.min(nameRow + 3, rows.length - 1);
+  for (let r = nameRow; r <= winEnd; r++) {
+    const row = rows[r];
+    const rowMap: Partial<ColumnMapping> = {};
+    row.forEach((cellRaw, idx) => {
+      const cell = String(cellRaw || '').toLowerCase().trim();
+      if (!cell || cell.length > 40) return;
+      if (isNumericCell(cellRaw)) return; // numeric cell can never be a header
+      for (const [field, hints] of Object.entries(HEADER_HINTS) as [keyof typeof HEADER_HINTS, string[]][]) {
+        if (rowMap[field as keyof ColumnMapping] != null) continue;
+        if (hints.some(h => cell === h || cell.startsWith(h))) {
+          (rowMap as any)[field] = idx;
+          break;
+        }
+      }
+    });
+    // Merge into the combined mapping (later rows refine qty/rate/value/unit)
+    let contributed = false;
+    for (const field of ['qty', 'rate', 'value', 'unit', 'group', 'hsn'] as const) {
+      const idx = rowMap[field];
+      if (idx != null) {
+        (mapping as any)[field] = idx;
+        contributed = true;
+      }
+    }
+    if (contributed) lastHeaderRow = r;
+  }
+
+  // Need name + qty at minimum to trust this header
+  if (mapping.qty != null) {
+    return { headerRow: lastHeaderRow, mapping };
   }
   return { headerRow: -1, mapping: {} };
 }
@@ -223,7 +285,7 @@ function heuristicColumns(rows: string[][]): ColumnMapping {
 const SKIP_ROW_RE = /^(grand\s+total|total|sub\s*total|subtotal|closing\s*balance|opening\s*balance|closing stock|opening stock|net(?!t)|gross|stock summary|stock item\b.*)/i;
 const GROUP_HEADER_RE = /^[A-Za-z\u0900-\u097F][A-Za-z\u0900-\u097F .&\-()/]{2,}$/; // pure text row -> possible group name
 
-function isLikelyTotalRow(nameCell: string, qty: number | null): boolean {
+function isLikelyTotalRow(nameCell: string): boolean {
   const n = String(nameCell || '').trim();
   if (SKIP_ROW_RE.test(n)) return true;
   // Tally group-total rows often look like "GroupName Total" / "Total GroupName"
@@ -234,16 +296,23 @@ function isLikelyTotalRow(nameCell: string, qty: number | null): boolean {
 // ---------- main ----------
 
 export async function parseTallyFile(file: File): Promise<ParseResult> {
+  const buf = await file.arrayBuffer();
+  const head = new Uint8Array(buf.slice(0, 4));
+  const isZip = head[0] === 0x50 && head[1] === 0x4B; // PK -> xlsx container
   const lower = file.name.toLowerCase();
   let rows: string[][];
   let sheetName: string | undefined;
 
-  if (lower.endsWith('.csv') || lower.endsWith('.txt')) {
-    rows = parseCsvText(await file.text());
-  } else if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
-    const res = await readWorkbookRows(file);
+  if (isZip || lower.endsWith('.xlsx')) {
+    const res = await readWorkbookRows(buf);
     rows = res.rows;
     sheetName = res.sheetName;
+  } else if (lower.endsWith('.csv') || lower.endsWith('.txt') || !isZip) {
+    const text = new TextDecoder('utf-8').decode(buf);
+    if (/\u0000/.test(text.slice(0, 4000))) {
+      throw new Error('Ye purani binary Excel (.xls) file hai. Isse Excel me .xlsx format me save karke dobara try karein.');
+    }
+    rows = parseCsvText(text);
   } else {
     throw new Error('Unsupported file. Tally CSV ya Excel (.xlsx) file use karein.');
   }
@@ -251,7 +320,7 @@ export async function parseTallyFile(file: File): Promise<ParseResult> {
   if (rows.length === 0) throw new Error('File khali hai ya padhi nahi ja saki.');
 
   const warnings: string[] = [];
-  let { headerRow, mapping: headerMapping } = findHeader(rows);
+  const { headerRow, mapping: headerMapping } = detectHeader(rows);
   let mapping: ColumnMapping;
   let startRow = 0;
 
@@ -275,6 +344,28 @@ export async function parseTallyFile(file: File): Promise<ParseResult> {
     warnings.push('Header row nahi mili - columns auto-detect kiye gaye hain. Preview zaroor check karein.');
   }
 
+  // ------------------------------------------------------------
+  // Tally stock-summary detection: item rows duplicate the name in
+  // the next column (A:B merged), batch/godown sub-rows have a
+  // DIFFERENT text there. Pre-scan to decide if this export uses
+  // that structure.
+  // ------------------------------------------------------------
+  const nameCol = mapping.name;
+  const dupCol = nameCol + 1;
+  let mergedCount = 0, distinctCount = 0;
+  if (mapping.qty >= 0 && dupCol < Math.max(...rows.map(r => r.length))) {
+    for (let r = startRow; r < rows.length; r++) {
+      const row = rows[r];
+      const a = String(row[nameCol] ?? '').trim();
+      const b = String(row[dupCol] ?? '').trim();
+      const q = parseQtyWithUnit(mapping.qty >= 0 ? row[mapping.qty] : undefined).qty;
+      if (!a || !b || q == null) continue;
+      if (a.toLowerCase() === b.toLowerCase()) mergedCount++; else distinctCount++;
+    }
+  }
+  const useNameDup = mergedCount >= 3 && distinctCount >= 1;
+  let skippedSubRows = 0;
+
   // track groups (Tally stock-summary style: a text-only row acts as group header)
   let currentGroup: string | undefined = undefined;
   const items: ParsedTallyItem[] = [];
@@ -282,25 +373,38 @@ export async function parseTallyFile(file: File): Promise<ParseResult> {
 
   for (let r = startRow; r < rows.length; r++) {
     const row = rows[r];
-    const nameCell = String(row[mapping.name] ?? '').trim();
+    const nameCell = String(row[nameCol] ?? '').trim();
     if (!nameCell) { skipped++; continue; }
 
-    if (isLikelyTotalRow(nameCell, null)) { skipped++; continue; }
+    if (isLikelyTotalRow(nameCell)) { skipped++; continue; }
+
+    // Tally stock-summary mode: skip batch/godown sub-rows
+    if (useNameDup) {
+      const dupCell = String(row[dupCol] ?? '').trim();
+      if (dupCell.toLowerCase() !== nameCell.toLowerCase()) { skippedSubRows++; continue; }
+    }
 
     const qtyRaw = mapping.qty >= 0 ? row[mapping.qty] : undefined;
-    const { qty, unit: inlineUnit } = mapping.qty >= 0 ? parseQtyWithUnit(qtyRaw) : { qty: null, unit: undefined };
+    const { qty: parsedQty, unit: inlineUnit } = mapping.qty >= 0 ? parseQtyWithUnit(qtyRaw) : { qty: null, unit: undefined };
 
-    // Group header row: pure text, no qty, no numbers anywhere except maybe value col
-    const hasAnyNumber = row.some((cell, c) => c !== mapping.name && parseNumber(cell) != null);
-    if (qty == null && !hasAnyNumber && GROUP_HEADER_RE.test(nameCell)) {
+    // Group header row: pure text, no qty, no numbers anywhere
+    const hasAnyNumber = row.some((cell, c) => c !== nameCol && parseNumber(cell) != null);
+    if (parsedQty == null && !hasAnyNumber && GROUP_HEADER_RE.test(nameCell)) {
       currentGroup = nameCell;
       continue;
     }
 
+    let qty = parsedQty;
     if (qty == null) {
-      skipped++;
-      if (skipped <= 3) warnings.push(`Row skip hui: "${nameCell}" (quantity nahi samajh aayi)`);
-      continue;
+      // Item row with no quantity but a value (net-zero stock) -> import with qty 0
+      const valueNum = mapping.value != null ? parseNumber(row[mapping.value]) : null;
+      if (useNameDup && valueNum != null) {
+        qty = 0;
+      } else {
+        skipped++;
+        if (skipped <= 3) warnings.push(`Row skip hui: "${nameCell}" (quantity nahi samajh aayi)`);
+        continue;
+      }
     }
 
     const unitCell = mapping.unit != null ? String(row[mapping.unit] ?? '').trim() : '';
@@ -317,6 +421,9 @@ export async function parseTallyFile(file: File): Promise<ParseResult> {
     });
   }
 
+  if (useNameDup && skippedSubRows > 0) {
+    warnings.push(`Tally stock-summary format: ${skippedSubRows} batch/godown sub-rows skip kiye (item-level qty hi import hoti hai).`);
+  }
   if (skipped > 3) warnings.push(`Total ${skipped} rows skip hui (empty / total / unparseable).`);
   if (items.length === 0) {
     throw new Error('Koi stock item parse nahi hua. Tally Stock Summary export check karein (CSV ya Excel).');
@@ -328,5 +435,6 @@ export async function parseTallyFile(file: File): Promise<ParseResult> {
     columnMapping: mapping,
     headerRow,
     totalRows: rows.length,
+    skippedSubRows,
   };
 }

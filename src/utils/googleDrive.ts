@@ -266,6 +266,41 @@ export const googleDriveService = {
     return lastDriveError;
   },
 
+  // Returns a guaranteed-valid access token (silent refresh if expired).
+  // Throws DriveAuthError when a manual reconnect is needed.
+  async getToken(): Promise<string> {
+    if (accessToken) {
+      if (await isTokenValid()) return accessToken;
+      clearToken();
+    }
+    const ok = await trySilentRefresh();
+    if (!ok) throw new DriveAuthError();
+    return accessToken!;
+  },
+
+  // Download any Drive file the token has access to (e.g. a file picked via
+  // Google Picker). Native Google Sheets are exported as .xlsx.
+  async downloadFileById(fileId: string): Promise<{ blob: Blob; name: string; mimeType: string }> {
+    const metaRes = await apiCall(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=name,mimeType`);
+    if (metaRes.status === 404 || metaRes.status === 403) {
+      throw new Error('File access nahi mila. File dobara Drive picker se select karein.');
+    }
+    if (!metaRes.ok) throw new Error(`Drive file info fail (HTTP ${metaRes.status})`);
+    const meta = await metaRes.json();
+
+    let url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`;
+    if (meta.mimeType === 'application/vnd.google-apps.spreadsheet') {
+      url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`;
+    }
+    const res = await apiCall(url);
+    if (res.status === 404 || res.status === 403) {
+      throw new Error('File access nahi mila. File dobara Drive picker se select karein.');
+    }
+    if (!res.ok) throw new Error(`Drive download fail (HTTP ${res.status})`);
+    const blob = await res.blob();
+    return { blob, name: String(meta.name || 'drive-file'), mimeType: String(meta.mimeType || '') };
+  },
+
   async downloadJSONBackup(): Promise<string | null> {
     if (!accessToken) {
       const ok = await trySilentRefresh();

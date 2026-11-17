@@ -93,6 +93,16 @@ npm run preview
 
 Parser auto-detects: item name, quantity (incl. "150 Pc" style), unit, rate, HSN, group. Total/opening rows aur group-header rows automatically skip hote hain.
 
+### Google Drive se Master Inventory
+
+Agar master inventory file Drive me rakhi hai (e.g. "master inventory for reference.xlsx"):
+
+1. **Tally Import** → **Google Drive se Master Inventory** → Choose File from Drive
+2. Google Picker me file select karein (ek baar - app file ko yaad rakhta hai)
+3. Uske baad **Import from Drive** button se ek tap me re-import
+
+Tally stock-summary format (batch/godown sub-rows ke saath) automatically handle hota hai - sirf item-level qty import hoti hai. `.xls` mime wali actually-xlsx files bhi chalti hain (content sniffing).
+
 ## Google Drive Backup Setup
 
 1. [Google Cloud Console](https://console.cloud.google.com/) me project banayein
