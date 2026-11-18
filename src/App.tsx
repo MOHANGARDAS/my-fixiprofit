@@ -10,6 +10,7 @@ const TallyImport = lazy(() => import('@/pages/TallyImport').then(m => ({ defaul
 const CountSessions = lazy(() => import('@/pages/CountSessions').then(m => ({ default: m.CountSessions })));
 const CountActive = lazy(() => import('@/pages/CountActive').then(m => ({ default: m.CountActive })));
 const CountReview = lazy(() => import('@/pages/CountReview').then(m => ({ default: m.CountReview })));
+const Verify = lazy(() => import('@/pages/Verify').then(m => ({ default: m.Verify })));
 const History = lazy(() => import('@/pages/History').then(m => ({ default: m.History })));
 const Settings = lazy(() => import('@/pages/Settings').then(m => ({ default: m.Settings })));
 
@@ -36,6 +37,7 @@ export default function App() {
               <Route path="/count" element={<CountSessions />} />
               <Route path="/count/:id" element={<CountActive />} />
               <Route path="/count/:id/review" element={<CountReview />} />
+              <Route path="/verify" element={<Verify />} />
               <Route path="/history" element={<History />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<Navigate to="/" replace />} />

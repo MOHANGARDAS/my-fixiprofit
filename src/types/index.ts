@@ -95,3 +95,21 @@ export interface AppMeta {
   value: string;
   updatedAt: string;
 }
+
+/**
+ * Tally batch/godown breakdown: which batch of an item sits at which
+ * location (godown/bin) and how much. This is the Tally book-stock mirror -
+ * rebuilt on every import. Physical counting adjustments live on Item.systemQty.
+ */
+export interface StockBatch {
+  id?: number;
+  itemId: number;
+  itemName: string;
+  /** Batch code ("" when item has no batch tracking - location-only row) */
+  batch: string;
+  /** Godown / bin location code e.g. "W1-D9-13", "WH-01 Bhiwandi" */
+  location: string;
+  qty: number;
+  rate?: number;
+  value?: number;
+}

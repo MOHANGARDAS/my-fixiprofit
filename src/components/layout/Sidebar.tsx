@@ -1,13 +1,13 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  LayoutDashboard, Package, Upload, ClipboardCheck, History, Settings, PackageCheck,
+  LayoutDashboard, Package, Upload, ScanSearch, History, Settings, PackageCheck,
 } from 'lucide-react';
 
 const navItems = [
   { path: '/', icon: LayoutDashboard, label: 'Home' },
+  { path: '/verify', icon: ScanSearch, label: 'Physical Verification' },
   { path: '/items', icon: Package, label: 'Stock Items' },
   { path: '/import', icon: Upload, label: 'Tally Import' },
-  { path: '/count', icon: ClipboardCheck, label: 'Count Sessions' },
   { path: '/history', icon: History, label: 'History' },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ];

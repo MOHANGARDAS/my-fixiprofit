@@ -1,7 +1,7 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/database/db';
 import { nameKeyOf } from '@/database/db';
-import type { Item, CountSession, CountEntry, StockAdjustment, TallyImportRecord } from '@/types';
+import type { Item, CountSession, CountEntry, StockAdjustment, TallyImportRecord, StockBatch } from '@/types';
 
 // ============================================================
 // Live data hooks (Dexie observables) for the inventory app
@@ -110,4 +110,9 @@ export function useAdjustments(): StockAdjustment[] {
 
 export function useImportHistory(): TallyImportRecord[] {
   return useLiveQuery(() => db.tallyImports.orderBy('importedAt').reverse().toArray(), []) ?? [];
+}
+
+/** All batch/location rows (Tally mirror) - used by the verification search page */
+export function useAllBatches(): StockBatch[] {
+  return useLiveQuery(() => db.stockBatches.toArray(), []) ?? [];
 }

@@ -17,6 +17,16 @@ import ExcelJS from 'exceljs';
 // This parser is deliberately tolerant of all of that.
 // ============================================================
 
+export interface ParsedBatch {
+  /** Batch code ("" when the item has no batch tracking - location-only row) */
+  batch: string;
+  /** Godown / bin location code */
+  location: string;
+  qty: number;
+  rate?: number;
+  value?: number;
+}
+
 export interface ParsedTallyItem {
   name: string;
   qty: number;
@@ -24,6 +34,8 @@ export interface ParsedTallyItem {
   rate?: number;
   hsn?: string;
   group?: string;
+  /** batch/godown breakdown from Tally stock summary sub-rows */
+  batches?: ParsedBatch[];
 }
 
 export interface ColumnMapping {
@@ -369,23 +381,44 @@ export async function parseTallyFile(file: File): Promise<ParseResult> {
   // track groups (Tally stock-summary style: a text-only row acts as group header)
   let currentGroup: string | undefined = undefined;
   const items: ParsedTallyItem[] = [];
+  // In Tally stock-summary mode, sub-rows attach to the item they follow
+  let lastItem: ParsedTallyItem | null = null;
   let skipped = 0;
 
   for (let r = startRow; r < rows.length; r++) {
     const row = rows[r];
     const nameCell = String(row[nameCol] ?? '').trim();
-    if (!nameCell) { skipped++; continue; }
 
-    if (isLikelyTotalRow(nameCell)) { skipped++; continue; }
-
-    // Tally stock-summary mode: skip batch/godown sub-rows
     if (useNameDup) {
       const dupCell = String(row[dupCol] ?? '').trim();
-      if (dupCell.toLowerCase() !== nameCell.toLowerCase()) { skippedSubRows++; continue; }
+      if (isLikelyTotalRow(nameCell)) { skipped++; continue; }
+
+      const isItemRow = !!nameCell && nameCell.toLowerCase() === dupCell.toLowerCase();
+      if (!isItemRow) {
+        // ---- batch/godown sub-row: batch (col A) + location (col B) + qty ----
+        const subQty = parseQtyWithUnit(mapping.qty >= 0 ? row[mapping.qty] : undefined).qty;
+        if (subQty == null || !lastItem || !dupCell) { skipped++; continue; }
+        const rateVal = mapping.rate != null ? parseNumber(row[mapping.rate]) : null;
+        const valueVal = mapping.value != null ? parseNumber(row[mapping.value]) : null;
+        if (!lastItem.batches) lastItem.batches = [];
+        lastItem.batches.push({
+          batch: nameCell && nameCell.toLowerCase() !== dupCell.toLowerCase() ? nameCell : '',
+          location: dupCell,
+          qty: subQty,
+          rate: rateVal ?? undefined,
+          value: valueVal ?? undefined,
+        });
+        skippedSubRows++;
+        continue;
+      }
+      // fall through: item row (name duplicated across A:B)
+    } else {
+      if (!nameCell) { skipped++; continue; }
+      if (isLikelyTotalRow(nameCell)) { skipped++; continue; }
     }
 
     const qtyRaw = mapping.qty >= 0 ? row[mapping.qty] : undefined;
-    const { qty: parsedQty, unit: inlineUnit } = mapping.qty >= 0 ? parseQtyWithUnit(qtyRaw) : { qty: null, unit: undefined };
+    const { qty: parsedQty, unit: inlineUnit } = mapping.qty >= 0 ? parseQtyWithUnit(qtyRaw) : { qty: null as number | null, unit: undefined };
 
     // Group header row: pure text, no qty, no numbers anywhere
     const hasAnyNumber = row.some((cell, c) => c !== nameCol && parseNumber(cell) != null);
@@ -411,14 +444,17 @@ export async function parseTallyFile(file: File): Promise<ParseResult> {
     const rateVal = mapping.rate != null ? parseNumber(row[mapping.rate]) : null;
     const hsnCell = mapping.hsn != null ? String(row[mapping.hsn] ?? '').trim() : '';
 
-    items.push({
+    const item: ParsedTallyItem = {
       name: nameCell,
       qty,
       unit: inlineUnit || (unitCell || undefined) || undefined,
       rate: rateVal != null ? rateVal : undefined,
       hsn: hsnCell || undefined,
       group: mapping.group != null ? (String(row[mapping.group] ?? '').trim() || currentGroup) : currentGroup,
-    });
+      batches: useNameDup ? [] : undefined,
+    };
+    items.push(item);
+    lastItem = item;
   }
 
   if (useNameDup && skippedSubRows > 0) {

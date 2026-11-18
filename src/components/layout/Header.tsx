@@ -10,6 +10,7 @@ export function pageTitle(pathname: string): string {
   if (pathname === '/count') return 'Count Sessions';
   if (pathname.match(/^\/count\/\d+\/review$/)) return 'Review & Adjust';
   if (pathname.startsWith('/count/')) return 'Physical Count';
+  if (pathname === '/verify') return 'Physical Stock Verification';
   if (pathname === '/history') return 'History';
   if (pathname === '/settings') return 'Settings';
   return 'StockVerify';

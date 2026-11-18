@@ -1,12 +1,12 @@
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
-  Package, Boxes, ClipboardCheck, ScanSearch, Upload, ArrowRight,
-  AlertTriangle, CheckCircle2, Clock,
+  Package, Boxes, ScanSearch, Upload, ArrowRight,
+  AlertTriangle, CheckCircle2, ClipboardCheck, Search,
 } from 'lucide-react';
 import { useStats, useSessions } from '@/hooks/useStock';
 import { sessionService } from '@/database/db';
-import { formatCurrency, formatQty, timeAgo, formatDateTime } from '@/utils/dateUtils';
+import { formatCurrency, formatQty, formatDateTime } from '@/utils/dateUtils';
 
 export function Home() {
   const navigate = useNavigate();
@@ -28,6 +28,35 @@ export function Home() {
       exit={{ opacity: 0, y: -10 }}
       className="space-y-4 py-4 pb-6 max-w-3xl"
     >
+      {/* ===== HERO: Physical Stock Verification ===== */}
+      <button
+        onClick={() => navigate('/verify')}
+        className="w-full card !p-5 border-primary-500/40 bg-gradient-to-br from-primary-500/15 via-primary-500/5 to-transparent hover:from-primary-500/25 transition-all text-left"
+      >
+        <div className="flex items-center gap-4">
+          <div className="w-14 h-14 bg-primary-500 rounded-2xl flex items-center justify-center shadow-lg shadow-primary-500/30 flex-shrink-0">
+            <ScanSearch size={28} className="text-white" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-base font-bold text-white">Physical Stock Verification</p>
+            <p className="text-xs text-dark-400 mt-0.5">
+              Batch / code / location se Tally stock search karein
+            </p>
+          </div>
+          <ArrowRight size={20} className="text-primary-400 flex-shrink-0" />
+        </div>
+        <div className="flex items-center gap-3 mt-4 pt-3 border-t border-dark-700/60">
+          <div className="flex items-center gap-1.5 text-[10px] text-dark-400">
+            <Search size={11} className="text-primary-400" />
+            Code daalo → batch wise locations
+          </div>
+          <div className="flex items-center gap-1.5 text-[10px] text-dark-400">
+            <Boxes size={11} className="text-blue-400" />
+            Location daalo → saare codes
+          </div>
+        </div>
+      </button>
+
       {/* Stats grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="stat-card">
@@ -97,7 +126,7 @@ export function Home() {
           </div>
           <div className="text-center">
             <p className="text-sm font-semibold text-white">Start Count</p>
-            <p className="text-[10px] text-dark-400">Physical verification</p>
+            <p className="text-[10px] text-dark-400">Naya count session</p>
           </div>
         </button>
         <button
@@ -108,8 +137,8 @@ export function Home() {
             <Upload size={22} className="text-blue-400" />
           </div>
           <div className="text-center">
-            <p className="text-sm font-semibold text-white">Tally Import</p>
-            <p className="text-[10px] text-dark-400">CSV / Excel stock data</p>
+            <p className="text-sm font-semibold text-white">Daily Tally Import</p>
+            <p className="text-[10px] text-dark-400">Report / Drive file</p>
           </div>
         </button>
       </div>
@@ -125,7 +154,6 @@ export function Home() {
             <p className="text-sm text-white truncate">{stats.lastImport.fileName}</p>
             <p className="text-[10px] text-dark-500">
               {formatDateTime(stats.lastImport.importedAt)} · {stats.lastImport.itemCount} items · {stats.lastImport.mode}
-              {(stats.lastImport.newItems || stats.lastImport.updatedItems) ? ` (${stats.lastImport.newItems} new, ${stats.lastImport.updatedItems} updated)` : ''}
             </p>
           </div>
         </div>
@@ -139,8 +167,8 @@ export function Home() {
           </div>
           <p className="text-sm font-semibold text-white">Shuru karein: Tally se stock import</p>
           <p className="text-xs text-dark-400 max-w-xs mx-auto">
-            Tally me Stock Summary open karke export karein (Excel ya CSV), phir yahan import karein.
-            Uske baad physical counting shuru ho sakti hai.
+            Laptop se Tally Stock Summary export karein (Excel ya CSV), phir yahan import karein.
+            Uske baad physical verification search kaam karegi.
           </p>
           <button onClick={() => navigate('/import')} className="btn-primary text-sm mt-2">
             Import from Tally
@@ -174,7 +202,6 @@ export function Home() {
                   {s.shortageItems === 0 && s.excessItems === 0 ? ' · all matched' : ''}
                 </p>
               </div>
-              <Clock size={14} className="text-dark-600 flex-shrink-0" />
             </button>
           ))}
         </div>

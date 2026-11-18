@@ -1,8 +1,8 @@
 import Dexie, { type Table } from 'dexie';
 import type {
-  Item, CountSession, CountEntry, StockAdjustment, TallyImportRecord, AppMeta,
+  Item, CountSession, CountEntry, StockAdjustment, TallyImportRecord, AppMeta, StockBatch,
 } from '@/types';
-import type { ParsedTallyItem } from '@/utils/tallyParser';
+import type { ParsedTallyItem, ParsedBatch } from '@/utils/tallyParser';
 
 /** Normalize an item name for matching between Tally imports / counts */
 export function nameKeyOf(name: string): string {
@@ -15,6 +15,7 @@ export class StockVerifyDB extends Dexie {
   countEntries!: Table<CountEntry, number>;
   adjustments!: Table<StockAdjustment, number>;
   tallyImports!: Table<TallyImportRecord, number>;
+  stockBatches!: Table<StockBatch, number>;
   appMeta!: Table<AppMeta, string>;
 
   constructor() {
@@ -26,6 +27,10 @@ export class StockVerifyDB extends Dexie {
       adjustments: '++id, sessionId, itemId, appliedAt',
       tallyImports: '++id, importedAt',
       appMeta: 'key',
+    });
+    // v2: batch/godown level stock (Tally mirror) for location/code search
+    this.version(2).stores({
+      stockBatches: '++id, itemId, batch, location, itemName',
     });
   }
 }
@@ -249,11 +254,46 @@ function consolidateParsed(parsed: ParsedTallyItem[]): ParsedTallyItem[] {
       ex.unit = ex.unit ?? p.unit;
       ex.group = ex.group ?? p.group;
       ex.hsn = ex.hsn ?? p.hsn;
+      if (p.batches?.length) {
+        const map = new Map<string, ParsedBatch>();
+        for (const b of [...(ex.batches ?? []), ...p.batches]) {
+          const bk = `${b.batch}\u0000${b.location}`;
+          const eb = map.get(bk);
+          if (eb) { eb.qty += b.qty; eb.rate = eb.rate ?? b.rate; eb.value = (eb.value ?? 0) + (b.value ?? 0); }
+          else map.set(bk, { ...b });
+        }
+        ex.batches = [...map.values()];
+      }
     } else {
-      byKey.set(key, { ...p });
+      byKey.set(key, {
+        ...p,
+        batches: p.batches ? p.batches.map(b => ({ ...b })) : undefined,
+      });
     }
   }
   return [...byKey.values()];
+}
+
+/** Rebuild the stockBatches table (Tally mirror) from parsed batch rows. `ids[i]` = DB item id of parsed[i] */
+async function rebuildBatches(parsed: ParsedTallyItem[], ids: number[]): Promise<void> {
+  const rows: StockBatch[] = [];
+  parsed.forEach((p, idx) => {
+    const itemId = ids[idx];
+    if (itemId == null) return;
+    for (const b of p.batches ?? []) {
+      rows.push({
+        itemId,
+        itemName: p.name,
+        batch: b.batch,
+        location: b.location,
+        qty: b.qty,
+        rate: b.rate,
+        value: b.value,
+      });
+    }
+  });
+  await db.stockBatches.clear();
+  if (rows.length > 0) await db.stockBatches.bulkAdd(rows);
 }
 
 export const importService = {
@@ -275,9 +315,10 @@ export const importService = {
       updatedAt: now,
     }));
 
-    await db.transaction('rw', db.items, db.tallyImports, async () => {
+    await db.transaction('rw', db.items, db.stockBatches, db.tallyImports, async () => {
       await db.items.clear();
-      await db.items.bulkAdd(items);
+      const ids = (await db.items.bulkAdd(items, { allKeys: true })) as number[];
+      await rebuildBatches(parsed, ids as number[]);
       await db.tallyImports.add({
         fileName,
         importedAt: now,
@@ -302,7 +343,8 @@ export const importService = {
     const parsed = consolidateParsed(parsedRaw);
     let newItems = 0, updatedItems = 0;
 
-    await db.transaction('rw', db.items, db.tallyImports, async () => {
+    await db.transaction('rw', db.items, db.stockBatches, db.tallyImports, async () => {
+      const ids: number[] = [];
       for (const p of parsed) {
         const key = nameKeyOf(p.name);
         const existing = await db.items.where('nameKey').equals(key).first();
@@ -314,9 +356,10 @@ export const importService = {
             rate: p.rate ?? existing.rate,
             updatedAt: now,
           });
+          ids.push(existing.id!);
           updatedItems++;
         } else {
-          await db.items.add({
+          const newId = await db.items.add({
             name: p.name,
             nameKey: key,
             group: p.group,
@@ -327,9 +370,13 @@ export const importService = {
             createdAt: now,
             updatedAt: now,
           });
+          ids.push(newId);
           newItems++;
         }
       }
+
+      // Batch/location data always mirrors the latest Tally import
+      await rebuildBatches(parsed, ids);
 
       await db.tallyImports.add({
         fileName,
@@ -355,17 +402,19 @@ export interface FullBackup {
   sessions: CountSession[];
   countEntries: CountEntry[];
   adjustments: StockAdjustment[];
+  stockBatches?: StockBatch[];
 }
 
 export async function exportAllData(): Promise<FullBackup> {
-  const [items, tallyImports, sessions, countEntries, adjustments] = await Promise.all([
+  const [items, tallyImports, sessions, countEntries, adjustments, stockBatches] = await Promise.all([
     db.items.toArray(),
     db.tallyImports.toArray(),
     db.sessions.toArray(),
     db.countEntries.toArray(),
     db.adjustments.toArray(),
+    db.stockBatches.toArray(),
   ]);
-  return { items, tallyImports, sessions, countEntries, adjustments };
+  return { items, tallyImports, sessions, countEntries, adjustments, stockBatches };
 }
 
 /** Restore a full backup - replaces everything (used by Drive restore / JSON import) */
@@ -374,7 +423,7 @@ export async function importAllData(data: FullBackup): Promise<{ items: number }
   const clean = <T extends { id?: number }>(arr: T[] | undefined): T[] =>
     (Array.isArray(arr) ? arr : []).map(({ id, ...rest }) => rest as T);
 
-  await db.transaction('rw', db.items, db.tallyImports, db.sessions, db.countEntries, db.adjustments, async () => {
+  await db.transaction('rw', [db.items, db.tallyImports, db.sessions, db.countEntries, db.adjustments, db.stockBatches], async () => {
     await db.items.bulkAdd(clean(data.items).map(i => ({
       ...i,
       nameKey: i.nameKey || nameKeyOf(i.name),
@@ -385,6 +434,7 @@ export async function importAllData(data: FullBackup): Promise<{ items: number }
     await db.sessions.bulkAdd(clean(data.sessions));
     await db.countEntries.bulkAdd(clean(data.countEntries));
     await db.adjustments.bulkAdd(clean(data.adjustments));
+    await db.stockBatches.bulkAdd(clean(data.stockBatches));
   });
   return { items: data.items?.length ?? 0 };
 }
